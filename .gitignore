@@ -1,0 +1,4 @@
+.DS_Store
+# Unused raw source files (the game only loads the .m4a files below)
+music/batsound .mp4
+music/dogvideoplayback.m4a

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#05070f" />
+  <meta name="description" content="A cinematic Kerala sunset-to-midnight adventure for Ammu's birthday." />
+  <title>Vandana's Midnight Journey</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Dancing+Script:wght@600;700&family=Great+Vibes&family=Noto+Sans+Malayalam:wght@600;700&family=Poppins:wght@300;400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="scene" aria-label="Game view"></canvas>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud" class="hidden">
+    <div id="chapter-card">
+      <span id="chapter-num"></span>
+      <h2 id="chapter-title"></h2>
+    </div>
+    <div id="objective">
+      <span class="obj-label">Objective</span>
+      <span id="objective-text"></span>
+    </div>
+    <button id="mute-btn" type="button" aria-label="Toggle sound">🔊</button>
+    <div id="alert" role="alert"><span class="alert-icon">☔</span><span id="alert-text"></span></div>
+    <div id="narration" role="status" aria-live="polite"></div>
+    <div id="prompt" class="hidden">
+      <kbd id="prompt-key">E</kbd><span id="prompt-text"></span>
+    </div>
+    <div id="speedo" aria-hidden="true">
+      <svg viewBox="0 0 120 120">
+        <defs>
+          <linearGradient id="speedo-grad" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0" stop-color="#f5cd6e" />
+            <stop offset="1" stop-color="#ff5f95" />
+          </linearGradient>
+        </defs>
+        <path class="track" pathLength="100" d="M 28.2 91.8 A 45 45 0 1 1 91.8 91.8" />
+        <path id="speedo-arc" class="arc" pathLength="100" d="M 28.2 91.8 A 45 45 0 1 1 91.8 91.8" />
+        <g id="speedo-needle"><line x1="60" y1="60" x2="60" y2="24" /><circle cx="60" cy="60" r="4" /></g>
+      </svg>
+      <div class="speedo-val"><span id="speedo-num">0</span><small>km/h</small></div>
+    </div>
+  </div>
+
+  <!-- ============ Mobile controls ============ -->
+  <div id="mobile-controls" class="hidden">
+    <button id="btn-walk" type="button" aria-label="Walk forward">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l7 9h-4.5v7h-5v-7H5z" /></svg>
+      <span>Walk</span>
+    </button>
+    <button id="btn-action" type="button" aria-label="Action">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.6 6.9L22 9.3l-5.8 4.6L18.2 21 12 17l-6.2 4 2-7.1L2 9.3l7.4-.4z" /></svg>
+      <span>Action</span>
+    </button>
+  </div>
+
+  <div id="flash"></div>
+  <div id="fade"></div>
+
+  <!-- ============ Start screen ============ -->
+  <div id="start-screen">
+    <div class="start-inner">
+      <p class="start-eyebrow">A Kerala night story for Ammu</p>
+      <h1 class="start-title">Vandana's<br /><span>Midnight Journey</span></h1>
+      <button id="start-btn" type="button" disabled>Loading…</button>
+      <div class="start-controls">
+        <div class="ctrl desktop-only"><kbd>W</kbd><kbd>↑</kbd><span>Walk / Run</span></div>
+        <div class="ctrl desktop-only"><kbd>E</kbd><kbd>Space</kbd><span>Interact</span></div>
+        <div class="ctrl touch-only"><b>Hold Walk</b><span>to move</span></div>
+        <div class="ctrl touch-only"><b>Tap Action</b><span>to interact</span></div>
+      </div>
+      <p class="start-note">🎧 Best with headphones &amp; sound on</p>
+    </div>
+  </div>
+
+  <!-- ============ Paper reveal ============ -->
+  <div id="paper-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="paper-name">
+    <div class="paper">
+      <p class="paper-small">A folded note, warm from the evening sun…</p>
+      <h1 id="paper-name" class="paper-name">VANDANA</h1>
+      <p class="paper-small">…someone has been waiting for you tonight.</p>
+      <button type="button" class="btn" id="paper-close">Keep it close ♡</button>
+    </div>
+  </div>
+
+  <!-- ============ Puzzle modal ============ -->
+  <div id="puzzle-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="puzzle-question">
+    <form class="puzzle-card" id="puzzle-form" autocomplete="off" novalidate>
+      <div class="puzzle-icon" id="puzzle-icon">🔒</div>
+      <span class="puzzle-tag" id="puzzle-tag">Lock</span>
+      <h3 id="puzzle-question"></h3>
+      <input id="puzzle-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" />
+      <p id="puzzle-feedback" aria-live="assertive"></p>
+      <p id="puzzle-hint"></p>
+      <div class="puzzle-actions">
+        <button type="button" class="btn ghost" id="puzzle-cancel">Back</button>
+        <button type="submit" class="btn" id="puzzle-submit">Unlock</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ============ Phone call task ============ -->
+  <div id="phone-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="phone-name">
+    <div class="phone-card" id="phone-card">
+      <div class="phone-avatar">📞</div>
+      <p class="phone-status" id="phone-status">Dial his number to call him</p>
+      <h3 id="phone-name">Shreyas</h3>
+      <div class="phone-display" id="phone-display">&nbsp;</div>
+      <p id="phone-feedback" aria-live="assertive"></p>
+      <p id="phone-hint"></p>
+      <div class="phone-keypad" id="phone-keypad">
+        <button type="button" class="key" data-k="1">1</button>
+        <button type="button" class="key" data-k="2">2<small>ABC</small></button>
+        <button type="button" class="key" data-k="3">3<small>DEF</small></button>
+        <button type="button" class="key" data-k="4">4<small>GHI</small></button>
+        <button type="button" class="key" data-k="5">5<small>JKL</small></button>
+        <button type="button" class="key" data-k="6">6<small>MNO</small></button>
+        <button type="button" class="key" data-k="7">7<small>PQRS</small></button>
+        <button type="button" class="key" data-k="8">8<small>TUV</small></button>
+        <button type="button" class="key" data-k="9">9<small>WXYZ</small></button>
+        <button type="button" class="key ghost" data-k="back" aria-label="Delete">⌫</button>
+        <button type="button" class="key" data-k="0">0</button>
+        <button type="button" class="key ghost" data-k="cancel" aria-label="Cancel">✕</button>
+      </div>
+      <button type="button" class="phone-call-btn" id="phone-call-btn">📞 Call</button>
+    </div>
+  </div>
+
+  <!-- ============ Love letter ============ -->
+  <div id="letter" class="hidden" role="dialog" aria-modal="true" aria-labelledby="letter-title">
+    <div class="parchment">
+      <div class="parchment-glow"></div>
+      <h2 id="letter-title">Happy Birthday My Dear Ammu! <span class="t-heart">❤️</span></h2>
+      <div class="letter-body">
+        <p class="salute">Dear Ammu,</p>
+        <p>Life won't always be smooth or predictable. There will be tough days when things go wrong, times when I stumble, and moments when everything feels heavy. But there will also be days full of laughter, growth, and big wins. Through all of it, all I ever want is you beside me.</p>
+        <p>Love me when I'm at my lowest and struggling to find my way. Celebrate with me when we succeed and achieve our dreams. Hold my hand through every storm, every late-night ride, and every ordinary day in between.</p>
+        <p>I don't need things to be perfect, I just need it to be you. Be with me for a lifetime, Ammu. I promise that no matter where the road takes us, you will never have to walk alone.</p>
+        <p class="letter-sign">Happy Birthday, my favorite person. ❤️<br /><span>Shreyas</span></p>
+      </div>
+      <div class="letter-actions">
+        <button type="button" class="btn ghost" id="letter-song">♫ Play our song</button>
+        <button type="button" class="btn ghost" id="letter-hide">View the sky</button>
+        <button type="button" class="btn" id="letter-replay">↺ Relive the journey</button>
+      </div>
+    </div>
+  </div>
+  <div id="hearts-layer" aria-hidden="true"></div>
+  <button id="letter-show" type="button" class="hidden">💌 Open letter</button>
+
+  <div id="error-screen" class="hidden">
+    <div>
+      <h2>Oh no…</h2>
+      <p id="error-text">This device couldn't start 3D graphics. Try opening the page in an up-to-date Chrome or Safari.</p>
+    </div>
+  </div>
+
+  <!-- Three.js r128 + bloom post-processing (optional; the game falls back to plain rendering if these fail) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+  <script src="images/photos.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

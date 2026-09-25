@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Ammu's Birthday Adventure</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="gameRoot">
+      <canvas id="gameCanvas" width="1280" height="720"></canvas>
+
+      <div id="hud">
+        <div class="hud-card stage-name" id="stageTitle">Stage 1</div>
+        <div class="hud-card objective" id="objectiveText">Find the hidden plank and escape the woods.</div>
+      </div>
+
+      <div id="startScreen" class="overlay visible">
+        <div class="panel">
+          <p class="eyebrow">A Birthday Quest</p>
+          <h1>Midnight Promise</h1>
+          <p>
+            Walk through the shadowed streets, solve the puzzles, and follow the warm light home to the birthday surprise waiting for Ammu.
+          </p>
+          <button id="startButton">Tap / Press to Start Journey</button>
+        </div>
+      </div>
+
+      <div id="keypadOverlay" class="overlay hidden">
+        <div class="panel keypad-panel">
+          <h2>Vault Door</h2>
+          <p>Enter the 2-digit code hidden in the library clue.</p>
+          <div class="keypad-display" id="keypadDisplay">_ _</div>
+          <div class="keypad-grid">
+            <button class="digit">1</button>
+            <button class="digit">2</button>
+            <button class="digit">3</button>
+            <button class="digit">4</button>
+            <button class="digit">5</button>
+            <button class="digit">6</button>
+            <button class="digit">7</button>
+            <button class="digit">8</button>
+            <button class="digit">9</button>
+            <button class="clear-btn">Clear</button>
+            <button class="digit">0</button>
+            <button class="enter-btn">Enter</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="messageBox" class="message-box"></div>
+
+      <div id="touchControls" aria-label="Touch controls">
+        <button id="leftButton" class="touch-btn" aria-label="Move left">◀</button>
+        <button id="actionButton" class="touch-btn action-btn" aria-label="Interact">E</button>
+        <button id="rightButton" class="touch-btn" aria-label="Move right">▶</button>
+      </div>
+    </div>
+
+    <script src="game.js"></script>
+  </body>
+</html>
