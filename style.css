@@ -636,6 +636,78 @@ kbd {
 body.touch #speedo { left: auto; right: 16px; top: calc(70px + var(--safe-t)); bottom: auto; width: 104px; height: 104px; }
 body.touch .speedo-val { bottom: 14px; }
 
+/* In-ride math mini-challenge HUD */
+#arcade-hud {
+  position: absolute;
+  top: calc(16px + var(--safe-t));
+  left: 50%;
+  z-index: 11;
+  width: min(92vw, 420px);
+  padding: 10px 18px 12px;
+  border-radius: 16px;
+  text-align: center;
+  background: linear-gradient(160deg, rgba(24, 12, 44, 0.88), rgba(10, 6, 24, 0.92));
+  border: 1.5px solid rgba(245, 205, 110, 0.4);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 22px rgba(245, 205, 110, 0.14);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  transform: translate(-50%, 0);
+}
+#arcade-hud.hidden { opacity: 0; pointer-events: none; transform: translate(-50%, -14px); }
+#arcade-hud.good { animation: arcadeGood 0.6s ease; }
+#arcade-hud.bad { animation: arcadeBad 0.5s ease; }
+#arcade-title { font-family: 'Cinzel', serif; font-weight: 700; font-size: 0.78rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); }
+#arcade-sub { margin-top: 3px; font-size: 0.92rem; line-height: 1.3; }
+#answer-row {
+  position: absolute;
+  left: 50%;
+  bottom: calc(24px + var(--safe-b));
+  z-index: 11;
+  width: min(94vw, 560px);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  transform: translateX(-50%);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+#answer-row.hidden { opacity: 0; pointer-events: none; transform: translate(-50%, 18px); }
+#answer-row.locked .answer-btn { pointer-events: none; }
+.answer-btn {
+  position: relative;
+  pointer-events: auto;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 76px;
+  padding: 14px 8px;
+  border-radius: 18px;
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+  font-size: clamp(1.05rem, 4.6vw, 1.55rem);
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: linear-gradient(160deg, rgba(44, 22, 78, 0.92), rgba(14, 8, 30, 0.95));
+  border: 2px solid rgba(245, 205, 110, 0.6);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: transform 0.12s ease, border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+.answer-btn:hover { border-color: var(--gold); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5), 0 0 20px rgba(245, 205, 110, 0.5); }
+.answer-btn:active { transform: scale(0.95); }
+.answer-btn kbd { position: absolute; top: 6px; left: 8px; min-width: 1.5em; height: 1.5em; font-size: 0.62rem; font-family: 'Poppins', sans-serif; color: rgba(255, 255, 255, 0.75); }
+body.touch .answer-btn kbd { display: none; }
+.answer-btn.correct { background: linear-gradient(160deg, #3ddc8a, #178a4f); border-color: var(--ok); box-shadow: 0 0 30px rgba(111, 240, 168, 0.85); animation: answerPop 0.45s ease; }
+.answer-btn.wrong { background: linear-gradient(160deg, #ff5a6e, #a81f33); border-color: var(--danger); box-shadow: 0 0 26px rgba(255, 107, 125, 0.8); animation: answerShake 0.45s ease; }
+.answer-btn.dim { opacity: 0.35; }
+body.quiz-active #mobile-controls { display: none; }
+body.quiz-active #objective { opacity: 0; }
+@media (max-width: 600px) { #arcade-hud { top: calc(72px + var(--safe-t)); } }
+body.quiz-active #speedo.show { opacity: 0; }
+body.quiz-active #narration { bottom: calc(120px + var(--safe-b)); }
+@keyframes answerShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-8px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(4px); } }
+@keyframes answerPop { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes arcadeGood { 0%, 100% { box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 22px rgba(245,205,110,0.14); } 40% { box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 40px rgba(111,240,168,0.8); border-color: var(--ok); } }
+@keyframes arcadeBad { 0%, 100% { transform: translate(-50%, 0); } 25% { transform: translate(calc(-50% - 8px), 0); } 75% { transform: translate(calc(-50% + 8px), 0); } }
+
 #error-screen {
   position: fixed;
   inset: 0;

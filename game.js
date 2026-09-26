@@ -90,13 +90,28 @@
     station2: -268,
     bike: -282,
     curveStart: -292,
-    finalGate: -600,
-    plaza: -618,
-    end: -720,
   };
+  // The bike ride: a relaxed ~40s scenic drive split into 3 timed zones
+  // (Edappally/Metro corridor -> Marine Drive promenade -> Kadamakkudy causeway).
+  // Zone lengths are timed, not just distance-thirds, so pacing stays even
+  // no matter how the accelerate/cruise/decelerate speed curve bends.
+  const RIDE = { T: 42, ta: 6, td: 7, vmax: 19.5, zone1T: 12, zone2T: 15 };
+  RIDE.L = RIDE.vmax * (RIDE.T - RIDE.ta / 2 - RIDE.td / 2);
+  RIDE.sAt = (t) => (t < RIDE.ta ? 0.5 * RIDE.vmax * t * t / RIDE.ta : t < RIDE.T - RIDE.td ? 0.5 * RIDE.vmax * RIDE.ta + RIDE.vmax * (t - RIDE.ta) : RIDE.L - 0.5 * RIDE.vmax * (RIDE.T - t) * (RIDE.T - t) / RIDE.td);
+  RIDE.vAt = (t) => (t < RIDE.ta ? RIDE.vmax * t / RIDE.ta : t < RIDE.T - RIDE.td ? RIDE.vmax : RIDE.vmax * (RIDE.T - t) / RIDE.td);
+  Z.rideStart = Z.bike;
+  Z.rideFinish = Z.rideStart - RIDE.L;
+  Z.metroEnd = Z.rideStart - RIDE.sAt(RIDE.zone1T);
+  Z.marineEnd = Z.rideStart - RIDE.sAt(RIDE.zone1T + RIDE.zone2T);
+  // The golden-gate finale sits just past where the ride tween ends.
+  Z.finalGate = Z.rideFinish - 9;
+  Z.plaza = Z.finalGate - 18;
+  Z.end = Z.finalGate - 120;
   Z.curveEnd = Z.finalGate + 72;
-  Z.waterStart = -300;
-  Z.waterEnd = Z.finalGate + 58;
+  Z.waterStart = Z.metroEnd;
+  Z.waterEnd = Z.rideFinish - 5;
+  // Where the grass/backwater ground gives way to the finale beach ground.
+  Z.beachStart = Z.finalGate + 74;
 
   // Lateral offset of the winding backwater road (0 on straight sections).
   function roadX(z) {
@@ -688,9 +703,11 @@
     ribbon(Z.canyonEnd, Z.end, 3.5, 5.2, 0.004, gm, 1.7);
     for (let z = Z.canyonEnd - 4; z > Z.finalGate + 4; z -= rand(8, 13)) addPuddle(roadX(z) + rand(-2.6, 2.6), z);
     // Ground for the ride: land on the right, backwaters on the left.
-    const L = Z.canyonEnd - Z.end;
-    const gR = mesh(new THREE.PlaneGeometry(160, L), MAT.ground, 56, -0.02, (Z.canyonEnd + Z.end) / 2); gR.rotation.x = -Math.PI / 2;
-    [[Z.canyonEnd, Z.waterStart], [Z.waterEnd, Z.end]].forEach(([a, b]) => {
+    // This grass/backwater ground stops at Z.beachStart - the final stretch
+    // beyond that (golden gate onward) gets its own beach ground below.
+    const L = Z.canyonEnd - Z.beachStart;
+    const gR = mesh(new THREE.PlaneGeometry(160, L), MAT.ground, 56, -0.02, (Z.canyonEnd + Z.beachStart) / 2); gR.rotation.x = -Math.PI / 2;
+    [[Z.canyonEnd, Z.waterStart], [Z.waterEnd, Z.beachStart]].forEach(([a, b]) => {
       const gl = mesh(new THREE.PlaneGeometry(140, a - b), MAT.ground, -94, -0.02, (a + b) / 2); gl.rotation.x = -Math.PI / 2;
     });
   }
@@ -986,10 +1003,53 @@
   /* ------------------------------------------------------------------
      Stage 3: river & drawbridge
      ------------------------------------------------------------------ */
-  const water = mesh(new THREE.PlaneGeometry(260, Z.riverStart - Z.riverEnd + 2), envStd({ color: 0x6f8fc0, map: waterTex, roughness: 0.08, metalness: 0.85, envMapIntensity: 1.4 }), 0, -1.6, (Z.riverStart + Z.riverEnd) / 2);
+  // Luminous teal river: self-lit base so it reads at night, plus animated
+  // ripple normals so lamp and moon light glint across the surface.
+  const riverTex = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#0e4d6e'; g.fillRect(0, 0, w, h);
+    const tiled = (fn) => { for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) fn(ox, oy); };
+    for (let i = 0; i < 70; i++) {
+      const x = Math.random() * w, y = Math.random() * h, r = rand(16, 46), light = Math.random() < 0.5;
+      tiled((ox, oy) => {
+        const gr = g.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+        gr.addColorStop(0, light ? 'rgba(46,150,178,0.4)' : 'rgba(5,36,58,0.45)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gr; g.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
+      });
+    }
+    for (let i = 0; i < 300; i++) {
+      const x = Math.random() * w, y = Math.random() * h, l = rand(6, 26);
+      g.strokeStyle = `rgba(${140 + Math.random() * 90 | 0},${225 + Math.random() * 30 | 0},255,${rand(0.08, 0.38)})`;
+      g.lineWidth = rand(0.6, 1.8);
+      tiled((ox, oy) => { g.beginPath(); g.ellipse(x + ox, y + oy, l, l * 0.16, 0, 0, Math.PI * 2); g.stroke(); });
+    }
+  }, true);
+  riverTex.repeat.set(24, 3);
+  const riverTime = { value: 0 };
+  const riverMat = envStd({ color: 0x8fa8b8, map: riverTex, emissive: 0xffffff, emissiveMap: riverTex, emissiveIntensity: 0.68, roughness: 0.17, metalness: 0.4, envMapIntensity: 1.6 });
+  riverMat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRiverT = riverTime;
+    shader.vertexShader = 'varying vec3 vRiverW;\n' + shader.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n  vRiverW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = 'uniform float uRiverT;\nvarying vec3 vRiverW;\n' + shader.fragmentShader.replace('#include <normal_fragment_maps>', [
+      '#include <normal_fragment_maps>',
+      '{',
+      '  vec2 p = vRiverW.xz;',
+      '  vec2 s = vec2(0.8, 0.3) * cos(dot(p, vec2(0.8, 0.3)) * 1.9 + uRiverT * 1.7) * 0.5',
+      '         + vec2(-0.45, 0.9) * cos(dot(p, vec2(-0.45, 0.9)) * 3.1 + uRiverT * 2.3) * 0.32',
+      '         + vec2(0.7, -0.6) * cos(dot(p, vec2(0.7, -0.6)) * 6.2 + uRiverT * 3.4) * 0.18;',
+      '  normal = normalize((viewMatrix * vec4(normalize(vec3(-s.x * 0.22, 1.0, -s.y * 0.22)), 0.0)).xyz);',
+      '}',
+    ].join('\n'));
+  };
+  const water = mesh(new THREE.PlaneGeometry(260, Z.riverStart - Z.riverEnd + 2), riverMat, 0, -1.6, (Z.riverStart + Z.riverEnd) / 2);
   water.rotation.x = -Math.PI / 2;
-  waterTex.repeat.set(24, 3);
   [Z.riverStart, Z.riverEnd].forEach((z, i) => mesh(box(260, 4, 1), MAT.laterite, 0, -2.02, z + (i ? -0.5 : 0.5)));
+  // Warm lamp light spilling onto the water beside the bridge (faded in by updateLamps).
+  function riverReflection(rec, x, z, color) {
+    const m = new THREE.MeshBasicMaterial({ map: glowTex, color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+    const s = mesh(LAMP.plane, m, x, -1.57, z); s.rotation.x = -Math.PI / 2; s.scale.set(2.4, 6.5, 1);
+    rec.reflMat = m; rec.reflBase = 0.3;
+  }
+  const bridgeLamps = [];
   const bridgePivot = new THREE.Group();
   bridgePivot.position.set(0, 0, Z.riverStart);
   scene.add(bridgePivot);
@@ -1001,6 +1061,27 @@
       for (let z = -0.5; z > -deckLen; z -= 2) mesh(box(0.1, 1, 0.1), MAT.iron, s * 2.1, 0.5, z, bridgePivot);
       mesh(box(0.08, 0.08, deckLen), MAT.iron, s * 2.1, 1.0, -deckLen / 2, bridgePivot);
       mesh(box(0.8, 0.5, 0.6), MAT.metalDark, s * 1.6, 0.25, -deckLen + 0.4, bridgePivot);
+    }
+    // Lantern posts along both deck edges, near-to-far pairs; dark until the bridge is down.
+    const LH = 3.2, lampCol = 0xffd89a;
+    for (let i = 0; i < 3; i++) {
+      for (const s of [-1, 1]) {
+        const lz = -deckLen * (2 * i + 1) / 6;
+        const g = new THREE.Group(); g.position.set(s * 2.25, 0, lz); bridgePivot.add(g);
+        const pole = mesh(LAMP.pole, MAT.metalDark, 0, LH / 2, 0, g); pole.scale.y = LH;
+        mesh(LAMP.base, MAT.metalDark, 0, 0.22, 0, g);
+        mesh(LAMP.shade, MAT.metalDark, 0, LH + 0.3, 0, g);
+        const bulbMat = new THREE.MeshBasicMaterial({ color: C(lampCol).multiplyScalar(1.6) });
+        mesh(LAMP.bulb, bulbMat, 0, LH + 0.08, 0, g);
+        const glow = new THREE.Sprite(addGlow(lampCol, 0)); glow.scale.set(2.8, 2.8, 1); glow.position.set(0, LH + 0.08, 0); g.add(glow);
+        const coneMat = new THREE.MeshBasicMaterial({ color: lampCol, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+        const cone = mesh(LAMP.cone, coneMat, 0, LH / 2, 0, g); cone.scale.set(0.5, LH, 0.5);
+        const poolMat = new THREE.MeshBasicMaterial({ map: glowTex, color: lampCol, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+        const pl = mesh(LAMP.plane, poolMat, -s * 1.1, 0.03, 0, g); pl.rotation.x = -Math.PI / 2; pl.scale.set(2.6, 4.2, 1);
+        const rec = lampRecord(V3(s * 2.25, LH, Z.riverStart + lz), lampCol, { intensity: 1.9, onAt: 9, coneBase: 0.05, glow, bulbMat, coneMat, poolMat, baseBulb: bulbMat.color.clone() });
+        riverReflection(rec, s * 3.2, Z.riverStart + lz + 1.2, lampCol);
+        bridgeLamps.push(rec);
+      }
     }
     bridgePivot.rotation.x = Math.PI / 2 * 0.96;
     for (const s of [-1, 1]) {
@@ -1036,6 +1117,48 @@
       p.needsUpdate = true;
     }
   }
+  // Moonlight glitter path: a sparkling strip on the water that always runs from
+  // the viewer toward the moon, fading in once night falls over the river.
+  const moonGlitter = (() => {
+    const tex = canvasTex(128, 128, (g, w, h) => {
+      g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 150; i++) {
+        const x = Math.random() * w, y = Math.random() * h, l = rand(2, 10), t = rand(1, 2.2);
+        g.fillStyle = `rgba(225,238,255,${rand(0.35, 1)})`;
+        for (const ox of [-w, 0, w]) for (const oy of [-h, 0, h]) g.fillRect(x + ox - l / 2, y + oy, l, t);
+      }
+    }, true);
+    tex.repeat.set(3, 9);
+    const geo = new THREE.PlaneGeometry(1, 1, 6, 12);
+    const pos = geo.attributes.position, cols = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const u = pos.getX(i) * 2, t = pos.getY(i) + 0.5;
+      pos.setX(i, pos.getX(i) * lerp(0.35, 1, t));
+      const c = smooth(0, 0.12, t) * (1 - smooth(0.7, 1, t)) * Math.pow(Math.max(0, 1 - u * u), 1.5);
+      cols[i * 3] = cols[i * 3 + 1] = cols[i * 3 + 2] = c;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    geo.rotateX(-Math.PI / 2);
+    const m = mesh(geo, new THREE.MeshBasicMaterial({ map: tex, vertexColors: true, color: 0xd2e2ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }), 0, -1.56, 0);
+    m.scale.set(9, 1, 34);
+    m.rotation.y = Math.atan2(-moonDir.x, -moonDir.z);
+    m.visible = false;
+    return m;
+  })();
+  function updateRiverFx(dt) {
+    riverTime.value = S.t;
+    riverTex.offset.x += dt * 0.012; riverTex.offset.y -= dt * 0.03;
+    const near = smooth(Z.riverEnd - 16, Z.riverEnd - 6, camera.position.z) * (1 - smooth(Z.riverStart + 22, Z.riverStart + 34, camera.position.z));
+    const a = 0.6 * near * smooth(0.55, 0.9, atmo.tod) * (1 - atmo.storm);
+    moonGlitter.visible = a > 0.01;
+    if (!moonGlitter.visible) return;
+    const dx = -Math.sin(moonGlitter.rotation.y), dz = -Math.cos(moonGlitter.rotation.y);
+    moonGlitter.position.set(camera.position.x + dx * 19, -1.56, camera.position.z + dz * 19);
+    moonGlitter.material.opacity = a * (0.85 + Math.sin(S.t * 2.3) * 0.1 + Math.sin(S.t * 5.1) * 0.05);
+    moonGlitter.material.map.offset.x += dt * 0.04;
+    moonGlitter.material.map.offset.y -= dt * 0.11;
+  }
+
   // Palms leaning over the river banks
   for (const zRange of [[-70, Z.riverStart + 1.5], [Z.riverEnd - 1.5, -130]]) {
     for (let z = zRange[0]; z > zRange[1]; z -= rand(3, 6) / DENSITY) {
@@ -1258,7 +1381,8 @@
     [-1.9, 1.9].forEach((px) => { if (Math.random() < 0.75) mesh(new THREE.PlaneGeometry(0.9, 0.8), winM, px, 1.5, 2.32, g); });
     const lg = new THREE.Sprite(addGlow(0xffa050, 0.55)); lg.scale.set(3, 3, 1); lg.position.set(0, 2.2, 3.4); g.add(lg);
   }
-  for (let z = Z.canyonEnd - 16; z > Z.finalGate + 90; z -= rand(18, 28)) keralaHouse(roadX(z) + rand(17, 24), z);
+  // Rustic tiled houses start after the modern Zone 1 metro corridor.
+  for (let z = Z.metroEnd; z > Z.finalGate + 90; z -= rand(18, 28)) keralaHouse(roadX(z) + rand(17, 24), z);
   for (let z = Z.canyonEnd - 4; z > Z.finalGate + 70; z -= rand(4.5, 7.5) / DENSITY) {
     const rx = roadX(z);
     if (z < Z.waterStart && z > Z.waterEnd) palm(rand(-26, -22), z, { ry: Math.PI + rand(-0.5, 0.5), s: rand(1, 1.3) });
@@ -1269,8 +1393,494 @@
   }
 
   /* ------------------------------------------------------------------
+     Bike ride: three seamless Kochi night-drive zones
+     Zone 1 Edappally/Metro corridor -> Zone 2 Marine Drive -> Zone 3 Kadamakkudy
+     ------------------------------------------------------------------ */
+  const concreteMat = std({ color: 0xb7b3a9, roughness: 0.92 });
+  const metroDarkMat = std({ color: 0x22242b, roughness: 0.6, metalness: 0.3 });
+  const METRO_Y = 9.4, metroOffset = 6.4;
+
+  // --- Zone 1: Edappally / Lulu & Metro corridor ---
+  {
+    const dz0 = Z.rideStart + 6, dz1 = Z.metroEnd - 6;
+    // Elevated concrete metro deck on pillars, following the road curve.
+    ribbon(dz0, dz1, metroOffset - 1.8, metroOffset + 1.8, METRO_Y, concreteMat, 22);
+    ribbon(dz0, dz1, metroOffset - 1.95, metroOffset - 1.7, METRO_Y + 0.06, metroDarkMat, 22);
+    ribbon(dz0, dz1, metroOffset + 1.7, metroOffset + 1.95, METRO_Y + 0.06, metroDarkMat, 22);
+    for (let z = dz0, i = 0; z > dz1; z -= 17, i++) {
+      const px = roadX(z) + metroOffset;
+      mesh(box(0.85, METRO_Y - 0.35, 0.85), concreteMat, px, (METRO_Y - 0.35) / 2, z);
+      mesh(box(3.2, 0.5, 1.15), concreteMat, px, METRO_Y - 0.3, z);
+    }
+    // Modern low-poly buildings with glowing windows (reuses the town's building()).
+    for (let z = Z.rideStart - 4, i = 0; z > Z.metroEnd + 6; z -= rand(15, 21), i++) {
+      const side = i % 2 ? 1 : -1, w = rand(6, 10), d = rand(7, 12), h = rand(15, 32);
+      const off = side > 0 ? metroOffset + 7 + w / 2 : 9 + w / 2;
+      building(roadX(z) + side * off, z - d / 2, w, d, h);
+    }
+    // A few pillars carry pinned movie posters, like a real metro corridor.
+    function makeMoviePosterTex(d) {
+      const W = 300, H = 420;
+      return textTex(W, H, (g) => {
+        const grad = g.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0, d.top); grad.addColorStop(1, d.bottom);
+        g.fillStyle = grad; g.fillRect(0, 0, W, H);
+        g.fillStyle = d.accent; g.globalAlpha = 0.5;
+        g.beginPath(); g.ellipse(W / 2, H * 0.4, W * 0.34, H * 0.24, 0, 0, Math.PI * 2); g.fill();
+        g.globalAlpha = 1;
+        g.fillStyle = '#ffe066';
+        g.beginPath(); g.arc(W - 44, 44, 28, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#3a2a00'; g.font = '700 15px Poppins, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText('★ HIT', W - 44, 44);
+        g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 5; g.strokeRect(7, 7, W - 14, H - 14);
+        g.textBaseline = 'alphabetic';
+        g.shadowColor = 'rgba(0,0,0,0.65)'; g.shadowBlur = 10;
+        g.fillStyle = '#ffffff';
+        fitText(g, d.title, W / 2, H * 0.72, W - 30, 800, 44, 'Cinzel, Georgia, serif');
+        g.shadowBlur = 0;
+        g.fillStyle = d.accent;
+        fitText(g, d.tagline, W / 2, H * 0.83, W - 40, 600, 17, 'Poppins, sans-serif');
+      });
+    }
+    const MOVIE_POSTERS = [
+      { title: 'MONSOON NIGHTS', tagline: 'A LOVE STORY BY THE BACKWATERS', top: '#5a1030', bottom: '#1a0510', accent: '#ff5f95' },
+      { title: 'MIDNIGHT RIDER', tagline: 'ONE NIGHT. ONE ROAD. NO LOOKING BACK.', top: '#0a1a3a', bottom: '#020610', accent: '#5fc8ff' },
+      { title: 'MARINE DRIVE', tagline: 'WHERE THE CITY MEETS THE SEA', top: '#0a3a3a', bottom: '#021010', accent: '#4dd0e1' },
+      { title: 'KOCHI EXPRESS', tagline: 'HOLD ON TIGHT', top: '#4a2a05', bottom: '#160c02', accent: '#ffb347' },
+    ];
+    {
+      let pi = 0;
+      for (let z = dz0, i = 0; z > dz1; z -= 17, i++) {
+        if (i % 2 !== 0) continue;
+        const px = roadX(z) + metroOffset;
+        const tex = makeMoviePosterTex(MOVIE_POSTERS[pi % MOVIE_POSTERS.length]);
+        pi++;
+        const poster = mesh(new THREE.PlaneGeometry(0.75, 1.05), new THREE.MeshBasicMaterial({ map: tex }), px - 0.46, 1.75, z);
+        poster.rotation.y = -Math.PI / 2;
+      }
+    }
+    // LuLu billboard on a support frame.
+    const luluZ = Z.rideStart - 34, luluX = roadX(luluZ) - 9.5;
+    [-1.6, 1.6].forEach((dx) => mesh(box(0.22, 6.6, 0.22), MAT.metalDark, luluX + dx, 3.3, luluZ));
+    mesh(box(3.6, 0.2, 0.2), MAT.metalDark, luluX, 6.4, luluZ);
+    const lulu = neonSign('LULU', luluX, 6.2, luluZ, '#ff2222', Math.PI / 2);
+    lulu.scale.set(1.9, 2.4, 1);
+    const luluGlow = new THREE.Sprite(addGlow(0xff3030, 0.7));
+    luluGlow.scale.set(6, 3, 1); luluGlow.position.set(luluX, 6.2, luluZ); scene.add(luluGlow);
+  }
+  // A glowing Kochi Metro train that glides back and forth over Zone 1.
+  function makeMetroTrain() {
+    const g = new THREE.Group();
+    const bodyMat = std({ color: 0x33507a, roughness: 0.35, metalness: 0.55 });
+    const stripeMat = new THREE.MeshBasicMaterial({ color: 0xfff2b8 });
+    for (let i = 0; i < 3; i++) {
+      const car = new THREE.Group(); car.position.z = i * 3.6; g.add(car);
+      mesh(box(1.9, 1.15, 3.3), bodyMat, 0, 0.75, 0, car);
+      mesh(box(1.94, 0.32, 2.9), stripeMat, 0, 0.85, 0, car);
+    }
+    g.visible = false;
+    scene.add(g);
+    return g;
+  }
+  const metroTrain = makeMetroTrain();
+  function updateMetroTrain() {
+    if (!S.started) return;
+    metroTrain.visible = true;
+    const span = Z.rideStart - Z.metroEnd, cyc = 13;
+    const u = (S.t % cyc) / cyc, k = u < 0.5 ? u * 2 : (1 - u) * 2;
+    const z = Z.rideStart - k * span;
+    metroTrain.position.set(roadX(z) + metroOffset, METRO_Y + 0.05, z);
+    metroTrain.rotation.y = u < 0.5 ? 0 : Math.PI;
+  }
+
+  // --- Zone 2: Marine Drive promenade ---
+  const rainbowLights = [];
+  {
+    const archX = -34, archZ = (Z.metroEnd + Z.marineEnd) / 2, archR = 22;
+    const palette = [0xff4d4d, 0xffb347, 0xfff066, 0x6dff8a, 0x66c8ff, 0xb28dff];
+    const N = palette.length;
+    for (let i = 0; i < N; i++) {
+      const a0 = Math.PI * (i / N), a1 = Math.PI * ((i + 1) / N);
+      const curve = new THREE.CatmullRomCurve3([0, 0.5, 1].map((t) => {
+        const a = lerp(a0, a1, t);
+        return V3(archX + Math.cos(a) * archR, Math.sin(a) * archR, archZ);
+      }));
+      const seg = mesh(new THREE.TubeGeometry(curve, 6, 0.32, 6, false), new THREE.MeshBasicMaterial({ color: palette[i] }));
+      rainbowLights.push(seg.material);
+    }
+    for (let i = 1; i < N; i++) {
+      const a = Math.PI * (i / N);
+      const top = V3(archX + Math.cos(a) * archR, Math.sin(a) * archR, archZ);
+      mesh(cyl(0.03, 0.03, top.y, 6), MAT.metalDark, top.x, top.y / 2, archZ);
+    }
+    // Distant skyline silhouette across the water, with soft window bokeh.
+    const skylineMat = std({ color: 0x0c1220, roughness: 1 });
+    const winMat = new THREE.MeshBasicMaterial({ color: 0xffdca0 });
+    for (let i = 0; i < 10; i++) {
+      const x = -150 + i * 7 + rand(-2, 2), h = rand(10, 34), z = archZ + rand(-40, 40);
+      mesh(box(5, h, 5), skylineMat, x, h / 2, z);
+      for (let w = 0; w < Math.floor(h / 3); w++) {
+        if (Math.random() < 0.5) mesh(new THREE.PlaneGeometry(0.6, 0.6), winMat, x + rand(-2, 2), rand(2, h - 1), z + 2.6);
+      }
+    }
+    // Floating Water Metro jetty terminal along the shoreline.
+    function makeWaterMetroJetty(x, z) {
+      const deckMat = std({ color: 0xdedbd2, roughness: 0.7 });
+      mesh(box(4, 0.25, 8), deckMat, x, -0.35, z);
+      [-1.8, 1.8].forEach((dx) => { for (let pz = -3; pz <= 3; pz += 3) mesh(cyl(0.08, 0.1, 1.4, 8), MAT.metalDark, x + dx, 0.25, z + pz); });
+      mesh(box(4.4, 0.12, 3.2), std({ color: 0x2a5a78, roughness: 0.6 }), x, 1.9, z - 1.5);
+      [-1.9, 1.9].forEach((dx) => mesh(cyl(0.06, 0.06, 2.0, 8), MAT.metalDark, x + dx, 0.9, z - 1.5));
+      neonSign('WATER METRO', x, 2.35, z - 1.5 + 0.05, '#3fd6ff', Math.PI / 2);
+      const jettyGlow = new THREE.Sprite(addGlow(0x3fd6ff, 0.5)); jettyGlow.scale.set(3, 3, 1); jettyGlow.position.set(x, 1.2, z); scene.add(jettyGlow);
+    }
+    makeWaterMetroJetty(-27, archZ + 16);
+  }
+  // The Kochi Water Metro boat, cruising parallel to the road with a gentle wake.
+  function makeWaterMetroBoat() {
+    const g = new THREE.Group();
+    // Fullbright materials (like the game's other night-visible props) so the
+    // boat reads clearly against the dark water instead of going near-black.
+    const hullMat = new THREE.MeshBasicMaterial({ color: 0xf2f5f7 });
+    const stripeMat = new THREE.MeshBasicMaterial({ color: 0x2ec4d6 });
+    const cabinMat = new THREE.MeshBasicMaterial({ color: 0xd8f5fa, transparent: true, opacity: 0.9 });
+    [-0.55, 0.55].forEach((dx) => {
+      mesh(box(0.55, 0.4, 3.6), hullMat, dx, 0.2, 0, g);
+      mesh(box(0.56, 0.14, 3.6), stripeMat, dx, 0.02, 0, g);
+    });
+    mesh(box(1.7, 0.12, 3.2), hullMat, 0, 0.42, 0, g);
+    mesh(box(1.3, 0.55, 2.0), cabinMat, 0, 0.78, -0.1, g);
+    mesh(box(1.34, 0.06, 2.04), hullMat, 0, 1.08, -0.1, g);
+    const beacon = new THREE.Sprite(addGlow(0x66e0ff, 0.9)); beacon.scale.set(1.6, 1.6, 1); beacon.position.set(0, 1.3, -0.1); g.add(beacon);
+    const hullGlow = new THREE.Sprite(addGlow(0xcfeeff, 0.55)); hullGlow.scale.set(4.5, 2, 1); hullGlow.position.set(0, 0.3, 0); g.add(hullGlow);
+    const wake = mesh(new THREE.PlaneGeometry(1.6, 5), new THREE.MeshBasicMaterial({ map: glowTex, color: 0xbfe8ff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }), 0, -0.15, 2.6, g);
+    wake.rotation.x = -Math.PI / 2;
+    g.visible = false;
+    scene.add(g);
+    return g;
+  }
+  const waterMetroBoat = makeWaterMetroBoat();
+  waterMetroBoat.scale.setScalar(1.7);
+  function updateWaterMetroBoat() {
+    // Cruises a fixed lead distance ahead of the rider through Zone 2, so it
+    // stays in view (rather than an independent path that could drift off-screen).
+    const inZone2 = S.onBike && P.z <= Z.metroEnd + 25 && P.z >= Z.marineEnd - 15;
+    waterMetroBoat.visible = inZone2;
+    if (!inZone2) return;
+    const lead = 46 + Math.sin(S.t * 0.3) * 6;
+    waterMetroBoat.position.set(-27, 0.05 + Math.sin(S.t * 2) * 0.02, P.z - lead);
+    waterMetroBoat.rotation.y = 0;
+  }
+
+  // --- Zone 3: Kadamakkudy sunset / midnight causeway ---
+  // Bilingual highway signboard right at the zone threshold.
+  {
+    const signZ = Z.marineEnd - 3, signX = roadX(signZ) + 8.5;
+    const signTex = textTex(768, 260, (g, w, h) => {
+      g.fillStyle = '#0d6b34'; g.fillRect(0, 0, w, h);
+      g.strokeStyle = '#ffffff'; g.lineWidth = 10; g.strokeRect(10, 10, w - 20, h - 20);
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillStyle = '#ffffff';
+      fitText(g, 'കടമക്കുടി', w / 2, h * 0.36, w - 60, 700, 74, ML);
+      fitText(g, 'KADAMAKKUDY', w / 2, h * 0.74, w - 60, 700, 58, 'Cinzel, Georgia, serif');
+    });
+    const board = mesh(new THREE.PlaneGeometry(4.6, 1.6), new THREE.MeshBasicMaterial({ map: signTex, side: THREE.DoubleSide }), signX, 3.1, signZ);
+    board.rotation.y = -Math.PI / 2;
+    [-1.6, 1.6].forEach((dz) => mesh(cyl(0.09, 0.11, 3.1, 8), MAT.metalDark, signX - 0.05, 1.55, signZ + dz));
+    const boardGlow = new THREE.Sprite(addGlow(0x7fffb0, 0.35)); boardGlow.scale.set(5, 2.2, 1); boardGlow.position.set(signX, 3.1, signZ); scene.add(boardGlow);
+  }
+  const wetlandTex = waterTex.clone(); wetlandTex.needsUpdate = true; wetlandTex.repeat.set(10, 16);
+  {
+    const z0 = Z.marineEnd, z1 = Z.waterEnd, L = z0 - z1, cz = (z0 + z1) / 2;
+    const wet = mesh(new THREE.PlaneGeometry(46, L), envStd({ color: 0x3d5a46, map: wetlandTex, roughness: 0.1, metalness: 0.8, envMapIntensity: 1.1 }), 32, -0.4, cz);
+    wet.rotation.x = -Math.PI / 2;
+    const moonStreak = new THREE.MeshBasicMaterial({ map: glowTex, color: 0xcfe0ff, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false });
+    const ms = mesh(LAMP.plane, moonStreak, 30, -0.35, cz); ms.rotation.x = -Math.PI / 2; ms.scale.set(6, L * 0.9, 1);
+    // Palms lining the narrow causeway edges.
+    for (let z = Z.marineEnd - 2, i = 0; z > Z.rideFinish + 14; z -= rand(9, 13), i++) {
+      const rx = roadX(z);
+      palm(rx - rand(5.5, 7.5), z, { s: rand(0.85, 1.05) });
+      if (i % 2) palm(rx + rand(5.5, 7.5), z, { s: rand(0.85, 1.05) });
+    }
+  }
+  // Fireflies drifting over the wetlands.
+  const fireflyBase = [];
+  const fireflyGeo = new THREE.BufferGeometry();
+  {
+    const N = 55;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const z = rand(Z.marineEnd - 8, Z.rideFinish + 18);
+      const x = roadX(z) + (Math.random() < 0.5 ? -1 : 1) * rand(3.5, 9);
+      fireflyBase.push({ x, z, y: rand(0.35, 1.9), p: Math.random() * 6.28 });
+      pos[i * 3] = x; pos[i * 3 + 1] = fireflyBase[i].y; pos[i * 3 + 2] = z;
+    }
+    fireflyGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  }
+  const fireflyMat = new THREE.PointsMaterial({ color: 0xd8ff8a, size: 0.16, map: glowTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  scene.add(new THREE.Points(fireflyGeo, fireflyMat));
+  function updateFireflies() {
+    const arr = fireflyGeo.attributes.position.array;
+    for (let i = 0; i < fireflyBase.length; i++) {
+      const b = fireflyBase[i], t = S.t * 0.6 + b.p;
+      arr[i * 3] = b.x + Math.sin(t) * 0.6;
+      arr[i * 3 + 1] = b.y + Math.sin(t * 1.7) * 0.25;
+      arr[i * 3 + 2] = b.z + Math.cos(t * 0.8) * 0.6;
+    }
+    fireflyGeo.attributes.position.needsUpdate = true;
+    fireflyMat.opacity = 0.55 + Math.sin(S.t * 3) * 0.25;
+  }
+  // Finish-line checkpoint: a cozy waterfront pier (fairy lights added below).
+  {
+    const pierZ = Z.rideFinish + 8, pierX = roadX(pierZ) - 7.5;
+    const deckTex2 = woodTex.clone(); deckTex2.needsUpdate = true; deckTex2.repeat.set(1, 3);
+    mesh(box(5, 0.3, 8), std({ color: 0xa88866, map: deckTex2, roughness: 0.85 }), pierX, 0.15, pierZ);
+    [-2.3, 2.3].forEach((dx) => { for (let pz = -3.5; pz <= 3.5; pz += 3.5) mesh(cyl(0.09, 0.11, 1.1, 8), MAT.woodDark, pierX + dx, 0.85, pierZ + pz); });
+    [-2.3, 2.3].forEach((dx) => mesh(box(0.1, 0.1, 8), MAT.woodDark, pierX + dx, 1.35, pierZ));
+    [-4, 4].forEach((pz) => { mesh(box(0.1, 1.4, 0.1), MAT.woodDark, pierX - 2.3, 0.7, pierZ + pz); mesh(box(0.1, 1.4, 0.1), MAT.woodDark, pierX + 2.3, 0.7, pierZ + pz); });
+  }
+  function updateRideZones(dt) {
+    updateMetroTrain();
+    updateWaterMetroBoat();
+    updateFireflies();
+    wetlandTex.offset.x += dt * 0.004; wetlandTex.offset.y -= dt * 0.009;
+    rainbowLights.forEach((m, i) => { m.color.setHSL(((S.t * 0.05) + i / rainbowLights.length) % 1, 0.85, 0.55); });
+  }
+
+  /* ------------------------------------------------------------------
+     In-ride math checkpoints: 3 mandatory stop-and-solve barrier gates.
+     The bike physically halts at each one and cannot proceed until it is
+     solved. Positions are fixed world-space points along the existing
+     road/zones, so every existing landmark (pillars, LuLu, arch, boat,
+     Kadamakkudy sign, fireflies, the golden-gate finale) keeps firing
+     exactly where it already does - only the time it takes to get there
+     is now variable.
+     ------------------------------------------------------------------ */
+  const LANE_X = [-3.2, 0, 3.2];
+  Z.cp1 = Z.rideStart - (Z.rideStart - Z.metroEnd) * 0.7;
+  // Past the Rainbow Bridge arch, so its foot isn't beside the bike at the standoff.
+  Z.cp3 = Z.metroEnd - (Z.metroEnd - Z.marineEnd) * 0.62;
+  // The bike halts this far short of each barrier so the whole gate stays in frame.
+  const CP_STANDOFF = 15;
+  const RM = { laneChoice: 1, laneOffsetCur: 0, nitroFov: 0, laneReturnZ: null };
+  function shuffled(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+  }
+  function dynamicPanel(w, h) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const tex = new THREE.CanvasTexture(c);
+    tex.anisotropy = Math.min(8, maxAniso);
+    return { ctx: c.getContext('2d'), tex, w, h };
+  }
+  function drawPanel(panel, text, opts = {}) {
+    const { ctx, w, h } = panel;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = opts.bg || '#102030'; ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = opts.border || '#f5cd6e'; ctx.lineWidth = 6; ctx.strokeRect(4, 4, w - 8, h - 8);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = opts.fg || '#fff';
+    fitText(ctx, String(text), w / 2, h / 2, w - 24, 800, opts.size || 54, 'Cinzel, Georgia, serif');
+    panel.tex.needsUpdate = true;
+  }
+  const barrierStripeTex = canvasTex(64, 16, (g, w, h) => {
+    g.fillStyle = '#f0f0f0'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#d21f1f';
+    for (let x = -8; x < w; x += 16) { g.save(); g.translate(x, 0); g.transform(1, 0, 0.6, 1, 0, 0); g.fillRect(0, 0, 8, h); g.restore(); }
+  }, true);
+  const radarStripeTex = canvasTex(64, 16, (g, w, h) => {
+    g.fillStyle = '#1a1a1a'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#ffcc33';
+    for (let x = -8; x < w; x += 16) { g.save(); g.translate(x, 0); g.transform(1, 0, 0.6, 1, 0, 0); g.fillRect(0, 0, 8, h); g.restore(); }
+  }, true);
+
+  // --- Checkpoint 1: Toll Gate Lane Hack (3 boom-gate arms) ---
+  function makeBoomGate(laneX, z) {
+    const g = new THREE.Group(); g.position.set(laneX, 0, z); scene.add(g);
+    mesh(cyl(0.13, 0.15, 1.7, 8), MAT.metalDark, -1.0, 0.85, 0, g);
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0xff2020 });
+    mesh(new THREE.SphereGeometry(0.09, 8, 6), lightMat, -1.0, 1.68, 0, g);
+    const glow = new THREE.Sprite(addGlow(0xff2020, 0.7)); glow.scale.set(1, 1, 1); glow.position.set(-1.0, 1.68, 0); g.add(glow);
+    const armPivot = new THREE.Group(); armPivot.position.set(-1.0, 1.55, 0); g.add(armPivot);
+    const arm = mesh(box(2.4, 0.12, 0.12), std({ color: 0xffffff, map: barrierStripeTex }), 1.2, 0, 0, armPivot);
+    arm.material.map.repeat.set(5, 1);
+    const panel = dynamicPanel(200, 150);
+    const panelMesh = mesh(new THREE.PlaneGeometry(1.15, 0.86), new THREE.MeshBasicMaterial({ map: panel.tex, side: THREE.DoubleSide }), 0, 2.55, 0, g);
+    return { g, armPivot, lightMat, glow, panel, panelMesh };
+  }
+  const boomGates = LANE_X.map((x) => makeBoomGate(roadX(Z.cp1) + x, Z.cp1));
+  {
+    const tex = textTex(1024, 200, (g, w, h) => {
+      g.fillStyle = '#1a0f06'; g.fillRect(0, 0, w, h);
+      g.strokeStyle = '#f5cd6e'; g.lineWidth = 8; g.strokeRect(8, 8, w - 16, h - 16);
+      g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#f5cd6e';
+      fitText(g, 'TOLL GATE', w / 2, h * 0.5, w - 60, 800, 90, 'Cinzel, Georgia, serif');
+    });
+    mesh(new THREE.PlaneGeometry(6.4, 1.25), new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }), roadX(Z.cp1), 3.6, Z.cp1 + 2.4);
+  }
+
+  // --- Checkpoint 3: Speed Radar Frequency Lock (police barrier) ---
+  function makeRadarBarrier(z) {
+    const g = new THREE.Group(); g.position.set(roadX(z), 0, z); scene.add(g);
+    [-4.7, 4.7].forEach((dx) => mesh(box(0.2, 1.9, 0.2), MAT.metalDark, dx, 0.95, 0, g));
+    const armPivot = new THREE.Group(); armPivot.position.set(-4.7, 1.75, 0); g.add(armPivot);
+    const armMat = std({ color: 0xffffff, map: radarStripeTex });
+    armMat.map.repeat.set(9, 1);
+    mesh(box(9.4, 0.16, 0.16), armMat, 4.7, 0, 0, armPivot);
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0xffcc33 });
+    const lightMat2 = lightMat.clone();
+    mesh(new THREE.SphereGeometry(0.1, 8, 6), lightMat, -4.7, 2.15, 0, g);
+    mesh(new THREE.SphereGeometry(0.1, 8, 6), lightMat2, 4.7, 2.15, 0, g);
+    const tripod = new THREE.Group(); tripod.position.set(5.8, 0, 0.7); g.add(tripod);
+    mesh(cyl(0.05, 0.08, 1.0, 6), MAT.metalDark, 0, 0.5, 0, tripod);
+    mesh(box(0.32, 0.22, 0.5), std({ color: 0x1c1c1c }), 0, 1.05, 0, tripod);
+    const beam = new THREE.Sprite(addGlow(0xffcc33, 0.6)); beam.scale.set(0.6, 0.6, 1); beam.position.set(0, 1.05, 0.32); tripod.add(beam);
+    return { g, armPivot, lightMat, lightMat2 };
+  }
+  const radarBarrier = makeRadarBarrier(Z.cp3);
+  radarBarrier.flashing = true;
+  const radarPanels = LANE_X.map((x) => {
+    const panel = dynamicPanel(220, 150);
+    const m = mesh(new THREE.PlaneGeometry(1.3, 0.9), new THREE.MeshBasicMaterial({ map: panel.tex, side: THREE.DoubleSide }), roadX(Z.cp3) + x, 2.6, Z.cp3 + 0.4);
+    const glow = new THREE.Sprite(addGlow(0xffcc33, 0.5)); glow.scale.set(2.1, 1.6, 1); glow.position.copy(m.position); scene.add(glow);
+    return { panel, mesh: m, glow };
+  });
+
+  const AR = {
+    hud: $('arcade-hud'), title: $('arcade-title'), sub: $('arcade-sub'),
+    answerRow: $('answer-row'), answerBtns: Array.from(document.querySelectorAll('.answer-btn')),
+    answerResolve: null,
+  };
+  function showArcade(title, sub) { AR.title.textContent = title; AR.sub.textContent = sub; AR.hud.classList.remove('hidden'); }
+  function hideArcade() { AR.hud.classList.add('hidden'); }
+  function flashArcade(good) { AR.hud.classList.remove('good', 'bad'); void AR.hud.offsetWidth; AR.hud.classList.add(good ? 'good' : 'bad'); }
+  // Shows the 3 choices (left-to-right = lane order) and resolves with the tapped index.
+  function askAnswers(labels) {
+    AR.answerBtns.forEach((b, i) => {
+      b.classList.remove('correct', 'wrong', 'dim');
+      b.querySelector('.answer-label').textContent = labels[i];
+      b.setAttribute('aria-label', `Answer ${i + 1}: ${labels[i]}`);
+    });
+    AR.answerRow.classList.remove('hidden', 'locked');
+    document.body.classList.add('quiz-active');
+    return new Promise((resolve) => { AR.answerResolve = resolve; });
+  }
+  function submitAnswer(i) {
+    const resolve = AR.answerResolve;
+    if (!resolve) return;
+    AR.answerResolve = null;
+    AR.answerRow.classList.add('locked');
+    resolve(i);
+  }
+  function markAnswer(i, good) {
+    AR.answerBtns.forEach((b, j) => {
+      if (j === i) { b.classList.remove('correct', 'wrong'); void b.offsetWidth; b.classList.add(good ? 'correct' : 'wrong'); }
+      else if (good) b.classList.add('dim');
+    });
+  }
+  function hideAllArcadeUi() {
+    hideArcade();
+    AR.answerRow.classList.add('hidden');
+    document.body.classList.remove('quiz-active');
+    AR.answerResolve = null;
+  }
+  AR.answerBtns.forEach((b, i) => b.addEventListener('click', () => { b.blur(); submitAnswer(i); }));
+  function updateRideChallenges(dt) {
+    RM.nitroFov = damp(RM.nitroFov, 0, 3, dt);
+    fovBoost += RM.nitroFov;
+    if (radarBarrier.flashing) {
+      const on = Math.sin(S.t * 6) > 0;
+      radarBarrier.lightMat.color.setHex(on ? 0xffcc33 : 0x332200);
+      radarBarrier.lightMat2.color.setHex(on ? 0xffcc33 : 0x332200);
+    }
+  }
+  // --- Checkpoint solvers ---
+  async function runTollCheckpoint() {
+    S.mode = 'cutscene'; input.forward = false;
+    AudioSys.engineSet(0.1);
+    for (;;) {
+      const a = Math.floor(rand(4, 10)), b = Math.floor(rand(4, 10)), correctVal = a * b;
+      const correctIdx = Math.floor(rand(0, 3)); RM.debugCorrectIdx = correctIdx;
+      const deltas = shuffled([-6, -4, -2, 2, 4, 6].filter((d) => correctVal + d > 0));
+      const nums = [0, 1, 2].map((i) => (i === correctIdx ? correctVal : correctVal + deltas.pop()));
+      boomGates.forEach((bg, i) => drawPanel(bg.panel, nums[i]));
+      showArcade('TOLL BARRIER LOCKED', `Solve to pass! ${a} × ${b} = ?`);
+      const chosen = await askAnswers(nums);
+      if (chosen === correctIdx) {
+        markAnswer(chosen, true);
+        AudioSys.chime(); flashArcade(true);
+        showArcade('ACCESS GRANTED', 'Barrier lifting — nitro boost!');
+        const gate = boomGates[correctIdx];
+        gate.lightMat.color.setHex(0x44ff88); gate.glow.material.color.setHex(0x44ff88);
+        await tween(0.6, (k) => { gate.armPivot.rotation.z = Math.PI / 2 * k; }, ease.out);
+        await wait(0.3);
+        RM.laneChoice = correctIdx;
+        RM.laneReturnZ = Z.cp1 - 6;
+        RM.nitroFov = 8;
+        break;
+      }
+      markAnswer(chosen, false);
+      AudioSys.error(); flashArcade(false); S.shake = Math.max(S.shake, 0.2);
+      showArcade('ACCESS DENIED', 'Try again — a new equation appears…');
+      await wait(1.0);
+    }
+    hideAllArcadeUi();
+  }
+  const RADAR_DECOYS = ['ZEUS', 'APOLLO', 'NEPTUNE', 'MARS', 'HERMES', 'ATLAS'];
+  async function runRadarCheckpoint() {
+    S.mode = 'cutscene'; input.forward = false;
+    AudioSys.engineSet(0.1);
+    for (;;) {
+      const correctIdx = Math.floor(rand(0, 3)); RM.debugCorrectIdx = correctIdx;
+      const decoys = shuffled(RADAR_DECOYS);
+      const words = [0, 1, 2].map((i) => (i === correctIdx ? 'CUPID' : decoys.pop()));
+      radarPanels.forEach((p, i) => drawPanel(p.panel, words[i], { bg: '#241a05', border: '#ffcc33', size: 40 }));
+      showArcade('RADAR LOCK', 'Who is known as the god of love?');
+      const chosen = await askAnswers(words);
+      if (chosen === correctIdx) {
+        markAnswer(chosen, true);
+        AudioSys.chime(); flashArcade(true);
+        showArcade('RADAR CLEAR', 'Full speed ahead!');
+        radarBarrier.flashing = false;
+        radarBarrier.lightMat.color.setHex(0x44ff88); radarBarrier.lightMat2.color.setHex(0x44ff88);
+        await tween(0.6, (k) => { radarBarrier.armPivot.rotation.z = Math.PI / 2 * k; }, ease.out);
+        radarPanels.forEach((p) => { p.mesh.visible = false; p.glow.visible = false; });
+        await wait(0.3);
+        RM.nitroFov = 8;
+        break;
+      }
+      markAnswer(chosen, false);
+      AudioSys.error(); flashArcade(false); S.shake = Math.max(S.shake, 0.2);
+      showArcade('ACCESS DENIED', 'Try again — the radar reshuffles…');
+      await wait(1.0);
+    }
+    hideAllArcadeUi();
+  }
+
+  /* ------------------------------------------------------------------
      Stage 6: final boulevard, golden gate, plaza
      ------------------------------------------------------------------ */
+  // The ending now takes place on a beach - same gate, cake, banner, fairy
+  // lights and fireworks as before, just sand and open sea for the setting.
+  const beachSandTex = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#cdab74'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 1400; i++) {
+      const v = 150 + Math.random() * 55 | 0;
+      g.fillStyle = `rgba(${v + 35},${v + 8},${v - 45},${rand(0.2, 0.55)})`;
+      g.beginPath(); g.ellipse(Math.random() * w, Math.random() * h, rand(0.6, 2.2), rand(0.5, 1.6), Math.random() * 3, 0, Math.PI * 2); g.fill();
+    }
+  }, true);
+  beachSandTex.repeat.set(9, 13);
+  const beachSandMat = std({ color: 0xffffff, map: beachSandTex, roughness: 1 });
+  const beachSeaTex = waterTex.clone(); beachSeaTex.needsUpdate = true; beachSeaTex.repeat.set(11, 22);
+  const beachFoamMat = new THREE.MeshBasicMaterial({ map: glowTex, color: 0xdfeeff, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false });
+  {
+    const z0 = Z.beachStart, z1 = Z.end, cz = (z0 + z1) / 2, L = z0 - z1;
+    const bR = mesh(new THREE.PlaneGeometry(160, L), beachSandMat, 56, -0.02, cz); bR.rotation.x = -Math.PI / 2;
+    const bL = mesh(new THREE.PlaneGeometry(40, L), beachSandMat, -44, -0.02, cz); bL.rotation.x = -Math.PI / 2;
+    const sea = mesh(new THREE.PlaneGeometry(100, L), envStd({ color: 0x5a7aa8, map: beachSeaTex, roughness: 0.06, metalness: 0.9, envMapIntensity: 1.5 }), -114, -0.45, cz);
+    sea.rotation.x = -Math.PI / 2;
+    const foam = mesh(LAMP.plane, beachFoamMat, -64, -0.42, cz); foam.rotation.x = -Math.PI / 2; foam.scale.set(2.2, L, 1);
+  }
   const fairy = [];
   {
     const pts = [], cols = [];
@@ -1484,10 +2094,7 @@
     p.legL.rotation.x = lerp(p.legL.rotation.x, s * 0.75 * amt, k);
     p.legR.rotation.x = lerp(p.legR.rotation.x, -s * 0.75 * amt, k);
     if (!h.userData.waving) {
-      if (h.userData.holdPuppy) {
-        p.armL.rotation.x = lerp(p.armL.rotation.x, 1.3, k);
-        p.armL.rotation.z = lerp(p.armL.rotation.z, 0.3, k);
-      } else if (h.userData.holdCone) {
+      if (h.userData.holdCone) {
         // hold the cone in front, lifting it for a lick every few seconds
         const lick = Math.pow(Math.max(0, Math.sin(S.t * 1.7)), 10);
         p.armL.rotation.x = lerp(p.armL.rotation.x, 1.15 + lick * 0.55, k);
@@ -1497,10 +2104,7 @@
         p.armL.rotation.x = lerp(p.armL.rotation.x, -s * 0.7 * amt, k);
         p.armL.rotation.z = lerp(p.armL.rotation.z, -0.08, k);
       }
-      if (h.userData.holdPuppy) {
-        p.armR.rotation.x = lerp(p.armR.rotation.x, 1.3, k);
-        p.armR.rotation.z = lerp(p.armR.rotation.z, -0.3, k);
-      } else if (h.userData.holdUmbrella) {
+      if (h.userData.holdUmbrella) {
         p.armR.rotation.x = lerp(p.armR.rotation.x, 2.72, k);
         p.armR.rotation.z = lerp(p.armR.rotation.z, -0.05, k);
       } else {
@@ -1616,24 +2220,6 @@
   heldPhone.visible = false;
   vandana.userData.parts.armR.add(heldPhone);
 
-  // The puppy she rescues from the rain, and the carried version she cradles on the way to shelter
-  function makePuppy() {
-    const g = makeDog(0xd9b183, 0.46);
-    g.userData.head.rotation.x = 0.35;
-    g.userData.legs.forEach((piv) => { piv.rotation.x = 0.55; });
-    g.userData.isPuppy = true;
-    g.userData.shiver = true;
-    return g;
-  }
-  const puppy = makePuppy();
-  puppy.position.set(-2.3, 0, Z.shelterStop - 0.8);
-  const heldPuppy = makePuppy();
-  heldPuppy.scale.multiplyScalar(0.92);
-  heldPuppy.rotation.y = Math.PI;
-  heldPuppy.position.set(0, 1.02, -0.3);
-  heldPuppy.visible = false;
-  vandana.userData.parts.body.add(heldPuppy);
-
   function makeBike() {
     const g = new THREE.Group();
     g.rotation.order = 'YXZ';
@@ -1691,18 +2277,18 @@
   crowShape.lineTo(0.5, -0.1); crowShape.lineTo(0.42, -0.08); crowShape.lineTo(0.36, -0.14); crowShape.lineTo(0.2, -0.1); crowShape.lineTo(0, -0.08); crowShape.closePath();
   const crowWingGeo = new THREE.ShapeGeometry(crowShape); crowWingGeo.rotateX(-Math.PI / 2);
   const flyerMat = new THREE.MeshBasicMaterial({ color: 0x07060a, side: THREE.DoubleSide });
-  function makeFlyer(wingGeo, isBat) {
+  function makeFlyer(wingGeo, isBat, mat = flyerMat) {
     const b = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), flyerMat); body.scale.set(1, 0.9, isBat ? 1.6 : 2.6); b.add(body);
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), mat); body.scale.set(1, 0.9, isBat ? 1.6 : 2.6); b.add(body);
     const wl = new THREE.Group(), wr = new THREE.Group();
-    wl.add(new THREE.Mesh(wingGeo, flyerMat)); wl.scale.x = -1;
-    wr.add(new THREE.Mesh(wingGeo, flyerMat));
+    wl.add(new THREE.Mesh(wingGeo, mat)); wl.scale.x = -1;
+    wr.add(new THREE.Mesh(wingGeo, mat));
     b.add(wl, wr);
     if (isBat) [-1, 1].forEach((s) => mesh(new THREE.SphereGeometry(0.014, 4, 4), new THREE.MeshBasicMaterial({ color: 0xff2a3a }), s * 0.03, 0.02, -0.1, b));
     else {
-      mesh(new THREE.SphereGeometry(0.055, 8, 6), flyerMat, 0, 0.02, -0.19, b);
+      mesh(new THREE.SphereGeometry(0.055, 8, 6), mat, 0, 0.02, -0.19, b);
       mesh(new THREE.ConeGeometry(0.02, 0.09, 5), std({ color: 0x2a2a2a }), 0, 0.01, -0.27, b).rotation.x = -Math.PI / 2;
-      mesh(new THREE.PlaneGeometry(0.12, 0.16), flyerMat, 0, 0, 0.22, b).rotation.x = -Math.PI / 2;
+      mesh(new THREE.PlaneGeometry(0.12, 0.16), mat, 0, 0, 0.22, b).rotation.x = -Math.PI / 2;
     }
     b.visible = false;
     b.userData = { wl, wr, flap: Math.random() * 6, fs: rand(18, 26), vel: V3(), last: V3() };
@@ -1723,6 +2309,34 @@
     c.userData.fs = rand(7, 10);
     crows.push(c);
   }
+
+  // Pale egrets (പക്ഷികൾ) gliding in a loose V over the river and bridge at night.
+  const egretMat = new THREE.MeshBasicMaterial({ color: 0xe6edf5, side: THREE.DoubleSide });
+  const riverBirds = [];
+  const flock = { x: 0, y: 0, z: 0, dir: 1, speed: 0, wait: 1.5 };
+  for (let i = 0; i < (lowPower ? 6 : 9); i++) {
+    const b = makeFlyer(crowWingGeo, false, egretMat);
+    b.scale.setScalar(rand(1.7, 2.1));
+    Object.assign(b.userData, { fs: rand(5.5, 7.5), row: Math.ceil(i / 2), side: i === 0 ? 0 : (i % 2 ? 1 : -1), oy: rand(-0.4, 0.4), bobP: Math.random() * 6 });
+    riverBirds.push(b);
+  }
+
+  // Pigeons resting on the road near the very start; they scatter as she approaches.
+  const pigeons = [];
+  function makePigeon(x, z) {
+    const p = makeFlyer(crowWingGeo, false);
+    p.scale.setScalar(rand(0.55, 0.7));
+    p.position.set(x, 0.04, z);
+    p.visible = true;
+    p.userData.wl.scale.setScalar(0.001);
+    p.userData.wr.scale.setScalar(0.001);
+    p.userData.sitting = true;
+    p.userData.bobP = Math.random() * 6;
+    p.userData.home = V3(x, 0.04, z);
+    pigeons.push(p);
+    return p;
+  }
+  for (let i = 0; i < 5; i++) makePigeon(rand(-1.7, 1.7), rand(Z.paper + 6, Z.start - 3));
 
   function makeDog(color, scale) {
     const g = new THREE.Group();
@@ -2040,8 +2654,12 @@
   }
   const letter3d = new THREE.Group();
   {
-    mesh(new THREE.PlaneGeometry(0.9, 0.64), new THREE.MeshBasicMaterial({ map: parchmentTex, side: THREE.DoubleSide, color: 0xdddddd }), 0, 0, 0, letter3d);
-    const lg = new THREE.Sprite(addGlow(0xffd27a, 0.8)); lg.scale.set(2.4, 2.4, 1); letter3d.add(lg);
+    // Sized and lit to clearly read as the main falling object, distinct from
+    // the smaller photo papers falling alongside it.
+    mesh(new THREE.PlaneGeometry(1.7, 1.2), new THREE.MeshBasicMaterial({ map: parchmentTex, side: THREE.DoubleSide, color: 0xfff2d2 }), 0, 0, 0.001, letter3d);
+    const heart = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff5f95, transparent: true, depthWrite: false }));
+    heart.scale.set(0.32, 0.32, 1); heart.position.set(0, 0, 0.01); letter3d.add(heart);
+    const lg = new THREE.Sprite(addGlow(0xffd27a, 0.95)); lg.scale.set(4.6, 4.6, 1); letter3d.add(lg);
     letter3d.userData.glow = lg;
     letter3d.visible = false;
     scene.add(letter3d);
@@ -2986,6 +3604,10 @@
     const r0 = bridgePivot.rotation.x;
     await tween(3.8, (k) => { bridgePivot.rotation.x = r0 * (1 - k); }, ease.inOutSine);
     S.shake = 0.2;
+    for (let i = 0; i < bridgeLamps.length; i += 2) {
+      bridgeLamps[i].onAt = -1; bridgeLamps[i + 1].onAt = -1;
+      await wait(0.3);
+    }
     cam.fn = null;
     S.mode = 'walk';
     objective('Cross the bridge, then call Shreyas 📞');
@@ -3039,54 +3661,8 @@
     S.hurry = true;
     S.mode = 'walk';
     S.limitZ = Z.shelterStop;
-    S.triggers.push({ z: Z.shelterStop + 0.05, fn: rescuePuppy });
-    S.timers.lightning = rand(6, 10);
-  }
-
-  async function rescuePuppy() {
-    S.mode = 'cutscene';
-    S.hurry = false;
-    input.forward = false;
-    P.speed = 0;
-    const p = vandana.userData.parts;
-    say('A tiny whimper cuts through the rain… a puppy is shivering by the roadside!', 4);
-    await wait(1.1);
-    puppy.visible = true;
-    AudioSys.bark(-0.5, 620, 0.35, 0.4);
-    await walkToXZ(puppy.position.x + 0.4, puppy.position.z + 0.25, 1.3);
-    vandana.userData.lock = true;
-    await tween(0.5, (k) => { p.body.rotation.x = 0.5 * k; p.body.position.y = -0.15 * k; p.armL.rotation.x = 1.4 * k; p.armR.rotation.x = 1.4 * k; });
-    puppy.visible = false;
-    heldPuppy.visible = true;
-    await wait(0.5);
-    await tween(0.5, (k) => { p.body.rotation.x = 0.5 * (1 - k); p.body.position.y = -0.15 * (1 - k); p.armL.rotation.x = 1.4 - 1.4 * k; p.armR.rotation.x = 1.4 - 1.4 * k; });
-    vandana.userData.lock = false;
-    vandana.userData.holdPuppy = true;
-    say('She scoops up the trembling little puppy and holds it close to keep it warm.', 3.8);
-    await walkToXZ(4.0, Z.shelter + 0.3, 2.4);
-    vandana.userData.lock = true;
-    await tween(0.5, (k) => { p.body.rotation.x = 0.5 * k; p.body.position.y = -0.15 * k; });
-    heldPuppy.visible = false;
-    puppy.position.set(3.6, 0, Z.shelter + 0.5);
-    puppy.userData.shiver = false;
-    puppy.userData.tailWag = true;
-    puppy.visible = true;
-    AudioSys.bark(0.4, 700, 0.4, 0.3);
-    setTimeout(() => AudioSys.bark(0.4, 760, 0.35, 0.3), 220);
-    await wait(0.5);
-    await tween(0.5, (k) => { p.body.rotation.x = 0.5 * (1 - k); p.body.position.y = -0.15 * (1 - k); });
-    vandana.userData.lock = false;
-    vandana.userData.holdPuppy = false;
-    say('Safe and dry under the tin roof… she gives the puppy one last gentle pat before hurrying on.', 4.2);
-    await wait(1.2);
-    await walkToXZ(0, Z.shelterStop, 1.5);
-    // face straight ahead again before handing control back
-    const ry0 = vandana.rotation.y;
-    await tween(0.35, (k) => { vandana.rotation.y = lerp(ry0, 0, k); }, ease.out);
-    vandana.rotation.y = 0;
-    S.mode = 'walk';
-    S.hurry = true;
     S.interact = { z: Z.shelterStop, range: 2.4, text: 'Pick up the black kuda (umbrella)', fn: pickUmbrella };
+    S.timers.lightning = rand(6, 10);
   }
 
   async function pickUmbrella() {
@@ -3128,7 +3704,7 @@
     await tween(dur, (k) => { P.z = lerp(z0, z, k); }, ease.linear);
     P.speed = 0;
   }
-  // Free-form walk used for short off-road detours (the puppy rescue).
+  // Free-form walk used for short off-road detours.
   async function walkToXZ(x, z, dur) {
     const x0 = P.x, z0 = P.z, dx = x - x0, dz = z - z0;
     if (Math.hypot(dx, dz) > 0.05) vandana.rotation.y = Math.atan2(dx, -dz);
@@ -3225,7 +3801,7 @@
     cam.fn = camFront; camFront();
     cam.pos.copy(cam.tPos); cam.look.copy(cam.tLook);
     await fadeTo(0);
-    objective('Ride to the golden gate');
+    objective('Ride through Edappally toward the coast 🏍️');
     AudioSys.engineStart();
     say('"Hold on tight, Ammu!" 🏍️', 2.6);
     await wait(1.0);
@@ -3233,53 +3809,97 @@
     await wait(1.4);
     // Low-angle chase camera
     cam.lambda = 8;
-    cam.fn = () => {
+    const camChase = () => {
       const [fx, fz, sx, sz] = fwdOf();
       const back = camera.aspect < 0.8 ? 5.6 : 4.2, sway = 1.0 + Math.sin(S.t * 0.35) * 0.6;
       cam.tPos.set(bike.position.x - fx * back + sx * sway, 0.95 + Math.sin(S.t * 0.6) * 0.12, bike.position.z - fz * back + sz * sway);
       cam.tLook.set(bike.position.x + fx * 7, 1.4, bike.position.z + fz * 7);
     };
+    cam.fn = camChase;
+    // While stopped at a barrier: a raised view over the riders that frames the whole gate.
+    async function atCheckpoint(gateZ, solve) {
+      cam.lambda = 2.6;
+      cam.fn = () => {
+        const portrait = camera.aspect < 0.8;
+        cam.tPos.set(bike.position.x + (portrait ? 0.7 : 1.4), 3.2, bike.position.z + (portrait ? 6.5 : 5.2));
+        cam.tLook.set(roadX(gateZ), 1.9, gateZ);
+      };
+      await solve();
+      cam.fn = camChase;
+      tween(1.6, (k) => { cam.lambda = lerp(3, 8, k); }, ease.linear);
+    }
     ui.speedo.classList.add('show');
     streaks.visible = true;
-    const zA = bike.position.z, zB = Z.finalGate + 9;
-    const L = zA - zB, T = 20, ta = 3.8, td = 4.2;
-    const vmax = L / (T - ta / 2 - td / 2);
-    const sAt = (t) => (t < ta ? 0.5 * vmax * t * t / ta : t < T - td ? 0.5 * vmax * ta + vmax * (t - ta) : L - 0.5 * vmax * (T - t) * (T - t) / td);
-    const vAt = (t) => (t < ta ? vmax * t / ta : t < T - td ? vmax : vmax * (T - t) / td);
-    let prevZ = zA, prevYaw = 0, prevT = 0, lean = 0;
-    const lines = [
-      [1.6, '"Hold on tight, Ammu — I brake for potholes, not for feelings!" 😄', 3.6],
-      [4.6, '"Right now I am basically your jacket, so drive nicely!" she laughs.', 3.6],
-      [7.6, 'Past swaying coconut palms and sleeping backwaters…', 3.6],
-      [10.6, '"Admit it, you love my driving." "I love that I am still alive!" 😂', 4],
-      [14, 'Her arms around him, her heart racing faster than the bike. ❤', 4],
-      [17.2, '"Slow down, Romeo — some of us forgot our common sense tonight!" ❤😆', 3.6],
-    ];
-    await tween(T, (k) => {
-      const t = k * T, dtT = Math.max(1e-4, t - prevT);
-      const z = zA - sAt(t), v = vAt(t);
-      const lane = -1.2 * smooth(0, 2.5, t) * (1 - smooth(T - 3.5, T, t));
-      const dxdz = roadX(z - 0.5) - roadX(z + 0.5);
-      const yaw = Math.atan2(-dxdz, 1);
-      const yawRate = (yaw - prevYaw) / dtT;
-      lean = lerp(lean, clamp(yawRate * v * 0.05, -0.32, 0.32), 0.1);
-      bike.position.set(roadX(z) + lane, 0, z);
-      bike.rotation.y = yaw;
-      bike.rotation.z = lean;
-      bike.userData.wheels.forEach((w) => { w.rotation.x -= (prevZ - z) / 0.42; });
-      const gearFrac = ((v / vmax) * 3.2) % 1;
-      AudioSys.engineSet(clamp(0.12 + 0.5 * (v / vmax) + 0.35 * gearFrac * (v / vmax), 0, 1));
-      P.z = z; P.x = bike.position.x;
-      S.rideSpeed = v;
-      fovBoost = 9 * (v / vmax);
-      setSpeedo(v * 3.6);
-      while (lines.length && t >= lines[0][0]) { const [, txt, d] = lines.shift(); say(txt, d); }
-      prevZ = z; prevYaw = yaw; prevT = t;
-    }, ease.linear);
-    bike.rotation.z = 0;
-    S.rideSpeed = 0; fovBoost = 0;
+    let prevYaw = 0, lean = 0, zoneMarine = false, zoneKadamakkudy = false;
+    // Drives a stretch of road with a natural accelerate/cruise/decelerate
+    // curve, arriving at rest right at targetZ (used between checkpoints,
+    // since each checkpoint brings the bike to a full, mandatory stop).
+    async function driveSegment(targetZ, opts = {}) {
+      const ta = opts.ta ?? 3.2, td = opts.td ?? 2.4, vmax = RIDE.vmax;
+      const z0 = bike.position.z;
+      const dist = z0 - targetZ;
+      if (dist <= 0.05) { bike.position.z = targetZ; P.z = targetZ; return; }
+      let vp = vmax, da = 0.5 * vp * ta, dd = 0.5 * vp * td;
+      if (da + dd > dist) { vp = Math.sqrt(Math.max(2, dist / (0.5 * ta + 0.5 * td))); da = 0.5 * vp * ta; dd = 0.5 * vp * td; }
+      const dCruise = Math.max(0, dist - da - dd), tCruise = dCruise / Math.max(vp, 0.01);
+      const segT = ta + tCruise + td;
+      const segSAt = (t) => (t < ta ? 0.5 * vp * t * t / ta : t < ta + tCruise ? da + vp * (t - ta) : da + dCruise + vp * (t - ta - tCruise) - 0.5 * (vp / td) * (t - ta - tCruise) * (t - ta - tCruise));
+      const segVAt = (t) => (t < ta ? vp * t / ta : t < ta + tCruise ? vp : Math.max(0, vp - (vp / td) * (t - ta - tCruise)));
+      let prevZ = z0, prevT = 0;
+      await tween(segT, (k) => {
+        const t = k * segT, dtT = Math.max(1e-4, t - prevT);
+        const z = z0 - segSAt(t), v = segVAt(t);
+        if (RM.laneReturnZ !== null && z < RM.laneReturnZ) { RM.laneChoice = 1; RM.laneReturnZ = null; }
+        const prevLane = RM.laneOffsetCur;
+        // Quick swing into the open toll lane from rest; gentle drift back to centre at speed.
+        RM.laneOffsetCur = lerp(RM.laneOffsetCur, LANE_X[RM.laneChoice], 1 - Math.exp(-(RM.laneChoice === 1 ? 1.1 : 2.6) * dtT));
+        const steer = clamp(-Math.atan2((RM.laneOffsetCur - prevLane) / dtT, Math.max(v, 4)), -0.35, 0.35);
+        const dxdz = roadX(z - 0.5) - roadX(z + 0.5);
+        const yaw = Math.atan2(-dxdz, 1) + steer;
+        const yawRate = (yaw - prevYaw) / dtT;
+        lean = lerp(lean, clamp(yawRate * v * 0.05, -0.32, 0.32), 0.1);
+        bike.position.set(roadX(z) + RM.laneOffsetCur, 0, z);
+        bike.rotation.y = yaw;
+        bike.rotation.z = lean;
+        bike.userData.wheels.forEach((w) => { w.rotation.x -= (prevZ - z) / 0.42; });
+        const gearFrac = ((v / vmax) * 3.2) % 1;
+        AudioSys.engineSet(clamp(0.12 + 0.5 * (v / vmax) + 0.35 * gearFrac * (v / vmax), 0, 1));
+        P.z = z; P.x = bike.position.x;
+        S.rideSpeed = v;
+        fovBoost = 9 * (v / vmax);
+        setSpeedo(v * 3.6);
+        if (!zoneMarine && z <= Z.metroEnd) {
+          zoneMarine = true;
+          objective('Cruise along Marine Drive 🌊');
+          say('The road bends toward the coast… Marine Drive opens up beside the water.', 3.6);
+        }
+        if (!zoneKadamakkudy && z <= Z.marineEnd) {
+          zoneKadamakkudy = true;
+          objective('Cross the Kadamakkudy causeway 🌴');
+          say('The road narrows onto the Kadamakkudy causeway, palms leaning over the water.', 3.8);
+        }
+        prevYaw = yaw; prevZ = z; prevT = t;
+      }, ease.linear);
+      bike.position.z = targetZ; P.z = targetZ; bike.rotation.z = 0;
+      S.rideSpeed = 0; fovBoost = 0;
+      AudioSys.engineSet(0.12);
+    }
+    say('"Hold on tight, Ammu — I brake for potholes, not for feelings!" 😄', 3.6);
+    await driveSegment(Z.cp1 + CP_STANDOFF);
+    objective('Solve the toll barrier to pass 🔢');
+    await atCheckpoint(Z.cp1, runTollCheckpoint);
+    say('Past the LuLu lights and the metro humming overhead…', 3.4);
+    const toCp3 = driveSegment(Z.cp3 + CP_STANDOFF);
+    await wait(4.2);
+    say('The Rainbow Bridge glows over Marine Drive as a Water Metro boat glides by.', 4.2);
+    await toCp3;
+    objective('Answer the radar\'s riddle 💘');
+    await atCheckpoint(Z.cp3, runRadarCheckpoint);
+    say('Her arms around him, her heart racing faster than the bike. ❤', 4);
+    await driveSegment(Z.rideFinish, { td: 3.2 });
     streaks.visible = false;
     ui.speedo.classList.remove('show');
+    hideAllArcadeUi();
     AudioSys.engineSet(0.03);
     S.stage = 6;
     chapter(6, 'The Golden Gate');
@@ -3513,7 +4133,11 @@
     }
     const k = e.key.toLowerCase();
     if (k === 'w' || e.key === 'ArrowUp') { input.forward = true; e.preventDefault(); }
-    if ((k === 'e' || e.key === ' ' || e.key === 'Enter') && letter.classList.contains('hidden')) { e.preventDefault(); if (!e.repeat) doAction(); }
+    if ((k === 'e' || e.key === ' ' || e.key === 'Enter') && letter.classList.contains('hidden')) {
+      e.preventDefault();
+      if (!e.repeat) doAction();
+    }
+    if (AR.answerResolve && !e.repeat && (e.key === '1' || e.key === '2' || e.key === '3')) { e.preventDefault(); submitAnswer(Number(e.key) - 1); }
   });
   window.addEventListener('keyup', (e) => {
     const k = e.key.toLowerCase();
@@ -3582,6 +4206,32 @@
     const vx = b.position.x - u.last.x, vz = b.position.z - u.last.z;
     if (Math.abs(vx) + Math.abs(vz) > 1e-4) b.rotation.y = Math.atan2(-vx, -vz);
   }
+  function updatePigeons(dt) {
+    for (const p of pigeons) {
+      const u = p.userData;
+      if (u.sitting) {
+        p.position.y = u.home.y + Math.sin(S.t * 2 + u.bobP) * 0.008;
+        p.rotation.y = Math.sin(S.t * 0.4 + u.bobP) * 0.3;
+        const dx = P.x - p.position.x, dz = P.z - p.position.z;
+        if (S.started && Math.hypot(dx, dz) < 3.2) {
+          u.sitting = false;
+          u.wl.scale.setScalar(1); u.wr.scale.setScalar(1);
+          const away = Math.atan2(-dx, -dz) + rand(-0.6, 0.6);
+          u.vel.set(Math.sin(away) * rand(3, 4.5), rand(2.6, 3.6), Math.cos(away) * rand(3, 4.5));
+          u.flap = Math.random() * 6;
+          u.last.copy(p.position);
+          AudioSys.wingFlap(clamp(dx / 10, -1, 1));
+        }
+      } else {
+        u.last.copy(p.position);
+        u.vel.y = Math.max(u.vel.y - 1.2 * dt, 0.4);
+        p.position.addScaledVector(u.vel, dt);
+        flapFlyer(p, dt, false);
+        faceVelocity(p);
+        if (p.position.y > 8 || Math.abs(p.position.x) > 40) p.visible = false;
+      }
+    }
+  }
   function updateBats(dt) {
     if (!bats[0].visible) return;
     for (const b of bats) {
@@ -3627,6 +4277,42 @@
     }
     if (!any) S.crowsFlying = false;
   }
+  function placeRiverBird(b) {
+    const u = b.userData;
+    b.position.set(
+      flock.x - flock.dir * u.row * 1.4,
+      flock.y + u.oy + Math.sin(S.t * 1.1 + u.bobP) * 0.25,
+      flock.z + u.side * u.row * 1.2 + Math.sin(S.t * 0.7 + u.bobP) * 0.2,
+    );
+  }
+  function updateRiverBirds(dt) {
+    const active = S.started && P.z < -70 && P.z > -150 && !S.raining && atmo.storm < 0.2;
+    if (!active) {
+      if (riverBirds[0].visible) riverBirds.forEach((b) => { b.visible = false; });
+      flock.speed = 0;
+      return;
+    }
+    if (flock.speed === 0 || Math.abs(flock.x) > 48) {
+      if (riverBirds[0].visible) riverBirds.forEach((b) => { b.visible = false; });
+      flock.wait -= dt;
+      if (flock.wait > 0) return;
+      flock.dir = Math.random() < 0.5 ? 1 : -1;
+      flock.x = -flock.dir * 44;
+      flock.y = rand(6, 8.5);
+      flock.z = clamp(P.z - rand(16, 26), Z.riverEnd - 16, Z.riverStart - 4);
+      flock.speed = rand(4.2, 5.6);
+      flock.wait = rand(3, 6);
+      riverBirds.forEach((b) => { b.visible = true; placeRiverBird(b); b.userData.last.copy(b.position); });
+    }
+    flock.x += flock.dir * flock.speed * dt;
+    for (const b of riverBirds) {
+      const u = b.userData;
+      u.last.copy(b.position);
+      placeRiverBird(b);
+      flapFlyer(b, dt, Math.sin(S.t * 0.6 + u.bobP) > 0.3);
+      faceVelocity(b);
+    }
+  }
   function updateDogs(dt) {
     if (!dogs[0].visible) return;
     for (const d of dogs) {
@@ -3655,17 +4341,6 @@
       }
     }
   }
-  function updatePuppy(dt) {
-    if (!puppy.visible) return;
-    const u = puppy.userData;
-    if (u.shiver) {
-      puppy.rotation.z = Math.sin(S.t * 22) * 0.05;
-      puppy.position.y = Math.abs(Math.sin(S.t * 11)) * 0.008;
-    } else if (u.tailWag) {
-      u.tail.rotation.y = Math.sin(S.t * 9) * 0.5;
-    }
-  }
-
   let poolTimer = 0;
   function updateLamps(dt) {
     const tod = atmo.tod;
@@ -3679,14 +4354,17 @@
         l.bulbMat.color.copy(l.baseBulb).multiplyScalar(0.12 + 0.88 * lv);
         l.coneMat.opacity = l.coneBase * lv * (1 + atmo.storm * 0.9);
         l.poolMat.opacity = 0.2 * lv;
-        l.streakMat.opacity = 0.07 * lv;
+        if (l.streakMat) l.streakMat.opacity = 0.07 * lv;
+        if (l.reflMat) l.reflMat.opacity = l.reflBase * lv;
       }
     }
     poolTimer -= dt;
     if (poolTimer <= 0) {
       poolTimer = S.rideSpeed > 1 ? 0.08 : 0.2;
       const fz = S.started ? P.z - 5 : 0, fx = P.x;
-      const sorted = lamps.slice().sort((a, b) => (Math.abs(a.pos.z - fz) + Math.abs(a.pos.x - fx) * 0.3) - (Math.abs(b.pos.z - fz) + Math.abs(b.pos.x - fx) * 0.3));
+      // Unlit lamps sort last so they never steal a real light from a lit one.
+      const score = (l) => Math.abs(l.pos.z - fz) + Math.abs(l.pos.x - fx) * 0.3 + (l.cur > 0.01 ? 0 : 1000);
+      const sorted = lamps.slice().sort((a, b) => score(a) - score(b));
       for (let i = 0; i < pool.length; i++) {
         poolMap[i] = sorted[i];
         pool[i].position.copy(sorted[i].pos);
@@ -3753,8 +4431,9 @@
   }
 
   function updateWorld(dt) {
-    waterTex.offset.x += dt * 0.012; waterTex.offset.y -= dt * 0.03;
     backwaterTex.offset.x += dt * 0.006; backwaterTex.offset.y -= dt * 0.012;
+    beachSeaTex.offset.x += dt * 0.006; beachSeaTex.offset.y -= dt * 0.012;
+    beachFoamMat.opacity = 0.24 + Math.sin(S.t * 0.9) * 0.08;
     for (const m of mistLayers) { m.t.offset.x += dt * m.s; m.t.offset.y += dt * m.s * 0.5; }
     for (const m of streetMist) m.m.position.x = m.x0 + Math.sin(S.t * 0.12 + m.p) * 3;
     paperGlow.material.opacity = 0.35 + Math.sin(S.t * 3) * 0.2;
@@ -3878,12 +4557,16 @@
     updateTweens(dt);
     updatePlayer(dt);
     updateAtmosphere(dt);
+    updatePigeons(dt);
     updateBats(dt);
     updateCrows(dt);
+    updateRiverBirds(dt);
     updateDogs(dt);
-    updatePuppy(dt);
+    updateRideZones(dt);
+    updateRideChallenges(dt);
     updateLamps(dt);
     updateWorld(dt);
+    updateRiverFx(dt);
     updateTriggers();
     updatePrompt();
     updateCamera(dt);
@@ -3902,5 +4585,5 @@
   sb.textContent = 'Begin the Journey';
 
   // Minimal hook for automated testing / debugging.
-  window.__journey = { S, P, atmo, PUZZLES, dateMatches, phoneSumMatches, phoneMatches, puppy, shelter, vandana, camera, letter3d };
+  window.__journey = { S, P, atmo, PUZZLES, dateMatches, phoneSumMatches, phoneMatches, shelter, vandana, camera, letter3d, Z, RIDE, waterMetroBoat, metroTrain, RM, bike };
 })();
