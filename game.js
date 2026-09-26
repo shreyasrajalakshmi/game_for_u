@@ -64,7 +64,8 @@
   }
 
   const isTouch = window.matchMedia('(hover: none) and (pointer: coarse)').matches || 'ontouchstart' in window;
-  const lowPower = isTouch || (navigator.hardwareConcurrency || 8) <= 4;
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 768;
+  const lowPower = isTouch || isMobile || (navigator.hardwareConcurrency || 8) <= 4;
   const DENSITY = lowPower ? 0.6 : 1;
 
   /* ------------------------------------------------------------------
@@ -126,12 +127,12 @@
   const canvas = $('scene');
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: !lowPower, powerPreference: 'high-performance' });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance', precision: isMobile ? 'mediump' : 'highp' });
   } catch (e) {
     fatal();
     return;
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1.5 : 2));
+  renderer.setPixelRatio(isMobile ? Math.min(window.devicePixelRatio || 1, 1.5) : Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
 
   const scene = new THREE.Scene();
@@ -3792,9 +3793,15 @@
     partyLights.boy.intensity = 0;
     bike.userData.spot.intensity = 3.2;
     bike.userData.beamMat.opacity = 0.16;
-    const fwdOf = () => { const y = bike.rotation.y; return [-Math.sin(y), -Math.cos(y), Math.cos(y), -Math.sin(y)]; };
+    // Reused every frame instead of allocating a new array (avoids GC churn during the ride).
+    const FWD = { fx: 0, fz: 0, sx: 0, sz: 0 };
+    function updateFwd() {
+      const y = bike.rotation.y;
+      FWD.fx = -Math.sin(y); FWD.fz = -Math.cos(y); FWD.sx = Math.cos(y); FWD.sz = -Math.sin(y);
+    }
     const camFront = () => {
-      const [fx, fz, sx, sz] = fwdOf();
+      updateFwd();
+      const { fx, fz, sx, sz } = FWD;
       cam.tPos.set(bike.position.x + fx * 4.4 + sx * 1.6, 1.5, bike.position.z + fz * 4.4 + sz * 1.6);
       cam.tLook.set(bike.position.x, 1.15, bike.position.z);
     };
@@ -3810,7 +3817,8 @@
     // Low-angle chase camera
     cam.lambda = 8;
     const camChase = () => {
-      const [fx, fz, sx, sz] = fwdOf();
+      updateFwd();
+      const { fx, fz, sx, sz } = FWD;
       const back = camera.aspect < 0.8 ? 5.6 : 4.2, sway = 1.0 + Math.sin(S.t * 0.35) * 0.6;
       cam.tPos.set(bike.position.x - fx * back + sx * sway, 0.95 + Math.sin(S.t * 0.6) * 0.12, bike.position.z - fz * back + sz * sway);
       cam.tLook.set(bike.position.x + fx * 7, 1.4, bike.position.z + fz * 7);
@@ -4078,11 +4086,12 @@
     showLetter();
   }
 
+  const celebrateLook = V3(0, 8.6, Z.plaza - 4); // constant target; computed once, not per frame
   function camCelebrate() {
     const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect);
     const dist = Math.max(17, 9.5 / Math.tan(hfov / 2));
     const a = Math.sin(S.t * 0.11) * (dist > 20 ? 0.15 : 0.32);
-    const look = V3(0, 8.6, Z.plaza - 4);
+    const look = celebrateLook;
     cam.tPos.set(look.x + Math.sin(a) * dist, 3.4 + Math.sin(S.t * 0.2) * 0.6, look.z + Math.cos(a) * dist);
     cam.tLook.copy(look);
   }
@@ -4342,6 +4351,12 @@
     }
   }
   let poolTimer = 0;
+  // Reused every pool refresh instead of `lamps.slice().sort(...)`, which
+  // allocated a new array (and a new comparator closure) many times a second.
+  const lampsSorted = lamps.slice();
+  let poolFz = 0, poolFx = 0;
+  function poolScore(l) { return Math.abs(l.pos.z - poolFz) + Math.abs(l.pos.x - poolFx) * 0.3 + (l.cur > 0.01 ? 0 : 1000); }
+  function poolCompare(a, b) { return poolScore(a) - poolScore(b); }
   function updateLamps(dt) {
     const tod = atmo.tod;
     for (const l of lamps) {
@@ -4361,14 +4376,13 @@
     poolTimer -= dt;
     if (poolTimer <= 0) {
       poolTimer = S.rideSpeed > 1 ? 0.08 : 0.2;
-      const fz = S.started ? P.z - 5 : 0, fx = P.x;
+      poolFz = S.started ? P.z - 5 : 0; poolFx = P.x;
       // Unlit lamps sort last so they never steal a real light from a lit one.
-      const score = (l) => Math.abs(l.pos.z - fz) + Math.abs(l.pos.x - fx) * 0.3 + (l.cur > 0.01 ? 0 : 1000);
-      const sorted = lamps.slice().sort((a, b) => score(a) - score(b));
+      lampsSorted.sort(poolCompare);
       for (let i = 0; i < pool.length; i++) {
-        poolMap[i] = sorted[i];
-        pool[i].position.copy(sorted[i].pos);
-        pool[i].color.copy(sorted[i].color);
+        poolMap[i] = lampsSorted[i];
+        pool[i].position.copy(lampsSorted[i].pos);
+        pool[i].color.copy(lampsSorted[i].color);
       }
     }
     for (let i = 0; i < pool.length; i++) { const l = poolMap[i]; pool[i].intensity = l ? l.intensity * (l.cur || 0) : 0; }
